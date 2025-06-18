@@ -1,21 +1,22 @@
 import streamlit as st
 import pandas as pd
 import yaml
+import json
 
 from utils.anomaly_detector import AnomalyDetector
 from utils.prophet_detector import ProphetAnomalyDetector
 from utils.rule_engine import RuleEngine
 
-#Streamlit Setup
+# --- Streamlit Setup ---
 st.set_page_config(page_title="🧭 Data Anomaly Hunter", layout="wide")
 st.title("🧭 Data Anomaly Hunter Dashboard")
 
-#Load Data
+# --- Load Data ---
 df = pd.read_csv("data/stream.csv").dropna()
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 df = df.tail(200)
 
-#Sidebar: Rule Editor
+# --- Sidebar: Rule Engine Editor ---
 st.sidebar.header("🧠 Rule Engine Editor")
 with open('rules/rules.yaml', 'r') as f:
     rules_data = yaml.safe_load(f)['rules']
@@ -34,23 +35,23 @@ for rule in rules_data:
 if st.sidebar.button("💾 Save Rules"):
     with open('rules/rules.yaml', 'w') as f:
         yaml.dump({'rules': editable_rules}, f)
-    st.sidebar.success("Rules saved.")
+    st.sidebar.success("✅ Rules saved successfully!")
 
-#Sidebar: Model Toggle
+# --- Sidebar: Model Toggle ---
 st.sidebar.header("🔀 Choose Detection Method")
 model_option = st.sidebar.radio(
     "Select model to run:",
     ("Isolation Forest", "Prophet", "Both")
 )
 
-#Rule Engine
+# --- Rule Engine Setup ---
 engine = RuleEngine()
 engine.set_rules(editable_rules)
 
-#Initialize Output DF 
+# --- Output DF Init ---
 df_final = df.copy()
 
-#Isolation Forest
+# --- Isolation Forest ---
 if model_option in ("Isolation Forest", "Both"):
     st.subheader("🌲 Isolation Forest Results")
     detector = AnomalyDetector()
@@ -58,7 +59,7 @@ if model_option in ("Isolation Forest", "Both"):
     df_iforest = detector.predict(df.copy())
     df_final['iforest_anomaly'] = df_iforest['anomaly']
 
-#Prophet
+# --- Prophet ---
 if model_option in ("Prophet", "Both"):
     st.subheader("📈 Prophet Time Series (CPU)")
     threshold = st.slider("Prophet Threshold (abs error)", 1, 50, 10)
@@ -67,15 +68,15 @@ if model_option in ("Prophet", "Both"):
     df_final['yhat'] = df_prophet['yhat']
     df_final['prophet_anomaly'] = df_prophet['anomaly']
 
-#Apply Rule Engine
+# --- Apply Rules ---
 df_final = engine.apply_rules(df_final)
 
-#Prophet Chart
+# --- Prophet Forecast Plot ---
 if model_option in ("Prophet", "Both"):
     st.markdown("### 📊 CPU Utilization + Prophet Forecast")
     st.line_chart(df_final.set_index('timestamp')[['cpu_util', 'yhat']])
 
-#Display Anomalies Table 
+# --- Anomaly Table Display ---
 st.markdown("### 🧨 Anomalies Detected")
 cols = ['timestamp', 'cpu_util', 'rule_label', 'rule_anomaly']
 if 'iforest_anomaly' in df_final.columns:
@@ -89,5 +90,32 @@ st.dataframe(
         subset=['rule_anomaly'] +
         (['iforest_anomaly'] if 'iforest_anomaly' in df_final else []) +
         (['prophet_anomaly'] if 'prophet_anomaly' in df_final else [])
-    )
+    ),
+    use_container_width=True
 )
+
+# --- Divider ---
+st.markdown("---")
+
+# --- Export Section ---
+st.subheader("📤 Export Detected Anomalies")
+
+export_format = st.selectbox("Select export format", ["CSV", "JSON"])
+export_only_anomalies = st.checkbox("Export only rows with any anomaly", value=True)
+
+# Filter if required
+export_df = df_final.copy()
+if export_only_anomalies:
+    export_df = export_df[
+        (export_df.get('rule_anomaly', 0) == 1) |
+        (export_df.get('iforest_anomaly', 0) == 1) |
+        (export_df.get('prophet_anomaly', 0) == 1)
+    ]
+
+# Download buttons
+if export_format == "CSV":
+    csv = export_df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download as CSV", data=csv, file_name="anomalies.csv", mime="text/csv")
+else:
+    json_data = export_df.to_json(orient="records")
+    st.download_button("⬇️ Download as JSON", data=json_data, file_name="anomalies.json", mime="application/json")
