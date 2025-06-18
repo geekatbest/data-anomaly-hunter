@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yaml
-import json
-
+import requests
 from utils.anomaly_detector import AnomalyDetector
 from utils.prophet_detector import ProphetAnomalyDetector
 from utils.rule_engine import RuleEngine
@@ -11,6 +10,27 @@ from utils.rule_engine import RuleEngine
 st.set_page_config(page_title="🧭 Data Anomaly Hunter", layout="wide")
 st.title("🧭 Data Anomaly Hunter Dashboard")
 
+def send_anomaly_alert(row):
+    endpoint = "https://hooks.zapier.com/hooks/catch/23432757/uo542pb/"  
+
+    payload = {
+        "timestamp": row['timestamp'].isoformat(),
+        "cpu_util": row.get('cpu_util', ''),
+        "memory_util": row.get('memory_util', ''),
+        "network_io": row.get('network_io', ''),
+        "disk_io": row.get('disk_io', ''),
+        "rule_label": row.get('rule_label', ''),
+        "anomaly_sources": ', '.join([
+            src for src in ['rule_engine', 'iforest', 'prophet']
+            if row.get(f"{src}_anomaly", 0) == 1
+        ])
+    }
+
+    try:
+        requests.post(endpoint, json=payload, timeout=3)
+    except Exception as e:
+        print("Alert failed:", e)
+        
 # --- Load Data ---
 df = pd.read_csv("data/stream.csv").dropna()
 df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -71,6 +91,14 @@ if model_option in ("Prophet", "Both"):
 # --- Apply Rules ---
 df_final = engine.apply_rules(df_final)
 
+# 🔔 Send alerts for new anomalies
+for _, row in df_final.iterrows():
+    if row.get("rule_anomaly", 0) == 1 or \
+       row.get("iforest_anomaly", 0) == 1 or \
+       row.get("prophet_anomaly", 0) == 1:
+        send_anomaly_alert(row)
+
+
 # --- Prophet Forecast Plot ---
 if model_option in ("Prophet", "Both"):
     st.markdown("### 📊 CPU Utilization + Prophet Forecast")
@@ -119,3 +147,4 @@ if export_format == "CSV":
 else:
     json_data = export_df.to_json(orient="records")
     st.download_button("⬇️ Download as JSON", data=json_data, file_name="anomalies.json", mime="application/json")
+
