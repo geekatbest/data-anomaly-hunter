@@ -1,0 +1,5 @@
+rules:
+  - if: cpu_util > 85
+    label: "CPU Spike"
+  - if: memory_util < 30
+    label: "Memory Leak"
